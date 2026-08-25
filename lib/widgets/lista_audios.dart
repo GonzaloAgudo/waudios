@@ -133,7 +133,16 @@ class _ListaAudiosState extends State<ListaAudios> {
   }
 
   void _reproducir(NotaAudio nota) {
-    widget.reproduccion.reproducir(nota, widget.audios);
+    // La cola de reproducción continua son solo los audios pendientes: al
+    // terminar uno no queremos que arranque algo que ya se había escuchado.
+    // El pulsado entra siempre, aunque ya esté escuchado, porque ahí la
+    // decisión es explícita del usuario.
+    final cola = [
+      for (final audio in widget.audios)
+        if (audio.ruta == nota.ruta || !widget.indice.estaEscuchado(audio.ruta))
+          audio,
+    ];
+    widget.reproduccion.reproducir(nota, cola);
   }
 
   @override

@@ -8,10 +8,14 @@ import '../modelos/nota_audio.dart';
 /// Reproductor global de la app.
 ///
 /// A diferencia de crear un `AudioPlayer` por cada hoja modal, aquí hay un solo
-/// reproductor con una **cola**: al tocar un audio se encola el día entero, así
-/// que al terminar uno empieza el siguiente automáticamente y se puede saltar
-/// hacia delante y hacia atrás sin volver a la lista. Eso es lo que hace que
-/// ponerse al día con veinte notas seguidas no requiera veinte toques.
+/// reproductor con una **cola**, así que al terminar uno empieza el siguiente
+/// automáticamente y se puede saltar hacia delante y hacia atrás sin volver a
+/// la lista. Eso es lo que hace que ponerse al día con veinte notas seguidas no
+/// requiera veinte toques.
+///
+/// Quién compone la cola es la lista que llama a [reproducir]: normalmente son
+/// los audios que quedan por escuchar, para que el encadenado no repita nada ya
+/// oído. Aquí solo se reproduce lo que llega.
 class ServicioReproduccion extends ChangeNotifier {
   final AudioPlayer _reproductor = AudioPlayer();
 
