@@ -5,6 +5,7 @@ import '../servicios/indice_audios.dart';
 import '../servicios/servicio_reproduccion.dart';
 import '../widgets/formato.dart' as fmt;
 import '../widgets/mini_reproductor.dart';
+import '../widgets/selector_paleta.dart';
 import 'pantalla_permisos.dart';
 import 'vista_calendario.dart';
 import 'vista_recientes.dart';
@@ -124,6 +125,11 @@ class _PantallaInicioState extends State<PantallaInicio>
               ],
             ),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.palette_outlined),
+                tooltip: 'Colores',
+                onPressed: () => mostrarSelectorPaleta(context),
+              ),
               Padding(
                 padding: const EdgeInsets.only(right: 12),
                 child: _indice.escaneando
