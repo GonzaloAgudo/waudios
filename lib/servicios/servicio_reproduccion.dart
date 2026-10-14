@@ -16,6 +16,30 @@ import '../modelos/nota_audio.dart';
 /// Quién compone la cola es la lista que llama a [reproducir]: normalmente son
 /// los audios que quedan por escuchar, para que el encadenado no repita nada ya
 /// oído. Aquí solo se reproduce lo que llega.
+/// Construye la cola de reproducción continua a partir de la lista que se está
+/// viendo y del audio que se ha pulsado.
+///
+/// Dos reglas, y las dos vienen de cómo se usa la app para ponerse al día:
+///
+/// - Solo entra lo que queda por escuchar. El audio pulsado entra siempre,
+///   aunque ya estuviera escuchado, porque ahí la decisión es explícita.
+/// - El orden es cronológico ascendente, se vea la lista como se vea. En
+///   "Recientes" los audios se enseñan del más nuevo al más viejo, pero
+///   encadenar en ese orden haría que tras el de las 20:05 sonara el de las
+///   20:01, que es justo al revés de como se siguió la conversación.
+List<NotaAudio> construirCola(
+  List<NotaAudio> audios,
+  NotaAudio pulsado,
+  bool Function(String ruta) estaEscuchado,
+) {
+  final cola = [
+    for (final audio in audios)
+      if (audio.ruta == pulsado.ruta || !estaEscuchado(audio.ruta)) audio,
+  ];
+  cola.sort((a, b) => a.fecha.compareTo(b.fecha));
+  return cola;
+}
+
 class ServicioReproduccion extends ChangeNotifier {
   final AudioPlayer _reproductor = AudioPlayer();
 

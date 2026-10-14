@@ -170,6 +170,7 @@ class _PantallaInicioState extends State<PantallaInicio>
                         soloSinEscuchar: _soloSinEscuchar,
                         alCambiarFiltro: (v) =>
                             setState(() => _soloSinEscuchar = v),
+                        alIrAlCalendario: () => setState(() => _pestana = 1),
                       ),
                       VistaCalendario(
                         indice: _indice,

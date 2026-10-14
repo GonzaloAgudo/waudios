@@ -4,7 +4,9 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:waudios/modelos/nota_audio.dart';
+import 'package:waudios/pantallas/vista_recientes.dart';
 import 'package:waudios/servicios/duracion_opus.dart';
+import 'package:waudios/servicios/servicio_reproduccion.dart';
 import 'package:waudios/widgets/formato.dart' as fmt;
 
 void main() {
@@ -78,6 +80,90 @@ void main() {
     test('cuenta de audios en singular y plural', () {
       expect(fmt.cuentaAudios(1), '1 audio');
       expect(fmt.cuentaAudios(4), '4 audios');
+    });
+  });
+
+  group('ventanaReciente', () {
+    final ahora = DateTime(2024, 6, 30, 12);
+
+    List<NotaAudio> hechaDe(List<int> diasDeAntiguedad) => [
+          for (final d in diasDeAntiguedad)
+            NotaAudio(
+              ruta: '/x/a$d.opus',
+              fecha: ahora.subtract(Duration(days: d)),
+              tamano: 1,
+            ),
+        ];
+
+    test('se queda con lo del último mes cuando hay de sobra', () {
+      // 100 audios repartidos por los últimos 25 días (uno cada 6 h) y 50 muy
+      // antiguos detrás, en el orden en que los da el índice: del más nuevo al
+      // más viejo.
+      final todas = [
+        for (var i = 0; i < 100; i++)
+          NotaAudio(
+            ruta: '/x/r$i.opus',
+            fecha: ahora.subtract(Duration(hours: i * 6)),
+            tamano: 1,
+          ),
+        ...hechaDe([for (var d = 0; d < 50; d++) 40 + d]),
+      ];
+
+      final ventana = ventanaReciente(todas, ahora: ahora);
+
+      expect(ventana.length, 100);
+      expect(
+        ventana.last.fecha.isAfter(ahora.subtract(const Duration(days: 30))),
+        isTrue,
+      );
+    });
+
+    test('nunca deja la pantalla casi vacía si no hay nada reciente', () {
+      // Todos de hace más de un año: ninguno entra por fecha.
+      final todas = hechaDe([for (var i = 0; i < 100; i++) 400 + i]);
+      final ventana = ventanaReciente(todas, ahora: ahora);
+      expect(ventana.length, minimoRecientes);
+    });
+
+    test('con pocos audios los devuelve todos', () {
+      final todas = hechaDe([500, 600, 700]);
+      expect(ventanaReciente(todas, ahora: ahora).length, 3);
+    });
+
+    test('con la lista vacía no revienta', () {
+      expect(ventanaReciente(const [], ahora: ahora), isEmpty);
+    });
+  });
+
+  group('construirCola', () {
+    NotaAudio audio(String nombre, DateTime cuando) =>
+        NotaAudio(ruta: '/x/$nombre.opus', fecha: cuando, tamano: 1);
+
+    final a2001 = audio('a', DateTime(2024, 5, 2, 20, 1));
+    final a2005 = audio('b', DateTime(2024, 5, 2, 20, 5));
+    final a2010 = audio('c', DateTime(2024, 5, 2, 20, 10));
+
+    // Como se ven en "Recientes": del más nuevo al más viejo.
+    final comoSeVen = [a2010, a2005, a2001];
+
+    test('encadena hacia delante en el tiempo, no hacia atrás', () {
+      final cola = construirCola(comoSeVen, a2001, (_) => false);
+      expect(cola.map((n) => n.fecha.minute), [1, 5, 10]);
+    });
+
+    test('deja fuera lo ya escuchado', () {
+      final cola = construirCola(comoSeVen, a2001, (r) => r == a2005.ruta);
+      expect(cola.map((n) => n.fecha.minute), [1, 10]);
+    });
+
+    test('el audio pulsado entra aunque ya esté escuchado', () {
+      final cola = construirCola(comoSeVen, a2005, (_) => true);
+      expect(cola, [a2005]);
+    });
+
+    test('con todo escuchado y sin pulsar nada ajeno, la cola es solo ese', () {
+      final cola = construirCola(comoSeVen, a2010, (_) => true);
+      expect(cola.single.ruta, a2010.ruta);
     });
   });
 

@@ -23,6 +23,10 @@ class ListaAudios extends StatefulWidget {
   final bool agruparPorDia;
 
   final Widget? cabecera;
+
+  /// Se dibuja tras el último audio (por ejemplo, el enlace al archivo).
+  final Widget? pie;
+
   final ScrollController? controlador;
 
   const ListaAudios({
@@ -32,6 +36,7 @@ class ListaAudios extends StatefulWidget {
     required this.reproduccion,
     this.agruparPorDia = false,
     this.cabecera,
+    this.pie,
     this.controlador,
   });
 
@@ -133,15 +138,8 @@ class _ListaAudiosState extends State<ListaAudios> {
   }
 
   void _reproducir(NotaAudio nota) {
-    // La cola de reproducción continua son solo los audios pendientes: al
-    // terminar uno no queremos que arranque algo que ya se había escuchado.
-    // El pulsado entra siempre, aunque ya esté escuchado, porque ahí la
-    // decisión es explícita del usuario.
-    final cola = [
-      for (final audio in widget.audios)
-        if (audio.ruta == nota.ruta || !widget.indice.estaEscuchado(audio.ruta))
-          audio,
-    ];
+    final cola =
+        construirCola(widget.audios, nota, widget.indice.estaEscuchado);
     widget.reproduccion.reproducir(nota, cola);
   }
 
@@ -192,18 +190,19 @@ class _ListaAudiosState extends State<ListaAudios> {
 
     if (!widget.agruparPorDia) {
       elementos.addAll(widget.audios);
-      return elementos;
+    } else {
+      DateTime? diaAnterior;
+      for (final nota in widget.audios) {
+        final dia = nota.dia;
+        if (diaAnterior == null || dia != diaAnterior) {
+          elementos.add(dia);
+          diaAnterior = dia;
+        }
+        elementos.add(nota);
+      }
     }
 
-    DateTime? diaAnterior;
-    for (final nota in widget.audios) {
-      final dia = nota.dia;
-      if (diaAnterior == null || dia != diaAnterior) {
-        elementos.add(dia);
-        diaAnterior = dia;
-      }
-      elementos.add(nota);
-    }
+    if (widget.pie != null) elementos.add(widget.pie!);
     return elementos;
   }
 }
