@@ -26,13 +26,11 @@ class _PantallaInicioState extends State<PantallaInicio>
 
   _EstadoPermiso _permiso = _EstadoPermiso.comprobando;
   int _pestana = 0;
-  bool _soloSinEscuchar = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _reproduccion.alTerminarAudio = (nota) => _indice.marcarEscuchado(nota.ruta);
     _comprobarPermisos();
   }
 
@@ -102,58 +100,43 @@ class _PantallaInicioState extends State<PantallaInicio>
       builder: (context, _) {
         return Scaffold(
           appBar: AppBar(
+            titleSpacing: 20,
+            toolbarHeight: 72,
             title: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('WAudios',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  'WAudios',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
+                      ),
+                ),
                 Text(
                   _indice.cargando
-                      ? 'Cargando…'
-                      : '${fmt.cuentaAudios(_indice.total)}'
-                          '${_indice.sinEscuchar > 0 ? ' · ${_indice.sinEscuchar} sin escuchar' : ''}',
+                      ? 'Buscando audios…'
+                      : fmt.cuentaAudios(_indice.total),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color:
-                            Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                 ),
               ],
             ),
             actions: [
-              if (_indice.escaneando)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 18),
-                  child: Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                )
-              else
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Buscar audios nuevos',
-                  onPressed: _indice.refrescar,
-                ),
-              PopupMenuButton<String>(
-                onSelected: (opcion) {
-                  if (opcion == 'todo_escuchado') _marcarTodo();
-                },
-                itemBuilder: (_) => [
-                  PopupMenuItem(
-                    value: 'todo_escuchado',
-                    enabled: _indice.sinEscuchar > 0,
-                    child: const ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.done_all),
-                      title: Text('Marcar todo como escuchado'),
-                    ),
-                  ),
-                ],
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: _indice.escaneando
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : IconButton(
+                        icon: const Icon(Icons.refresh_rounded),
+                        tooltip: 'Buscar audios nuevos',
+                        onPressed: _indice.refrescar,
+                      ),
               ),
             ],
           ),
@@ -167,9 +150,6 @@ class _PantallaInicioState extends State<PantallaInicio>
                       VistaRecientes(
                         indice: _indice,
                         reproduccion: _reproduccion,
-                        soloSinEscuchar: _soloSinEscuchar,
-                        alCambiarFiltro: (v) =>
-                            setState(() => _soloSinEscuchar = v),
                         alIrAlCalendario: () => setState(() => _pestana = 1),
                       ),
                       VistaCalendario(
@@ -204,30 +184,6 @@ class _PantallaInicioState extends State<PantallaInicio>
         );
       },
     );
-  }
-
-  Future<void> _marcarTodo() async {
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (contexto) => AlertDialog(
-        title: const Text('¿Marcar todo como escuchado?'),
-        content: Text(
-          'Se marcarán ${_indice.sinEscuchar} audios. No se borra ni se '
-          'modifica ningún archivo.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(contexto, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(contexto, true),
-            child: const Text('Marcar'),
-          ),
-        ],
-      ),
-    );
-    if (confirmado == true) _indice.marcarTodoEscuchado();
   }
 }
 

@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:waudios/modelos/nota_audio.dart';
 import 'package:waudios/pantallas/vista_recientes.dart';
-import 'package:waudios/servicios/duracion_opus.dart';
+import 'package:waudios/servicios/analisis_opus.dart';
 import 'package:waudios/servicios/servicio_reproduccion.dart';
 import 'package:waudios/widgets/formato.dart' as fmt;
 
@@ -51,9 +51,10 @@ void main() {
       expect(NotaAudio.desdeJson(['/x.opus', 'no-es-int', 1, null]), isNull);
     });
 
-    test('conDuracion no toca el resto de campos', () {
-      final medida = nota.conDuracion(const Duration(seconds: 5));
+    test('conAnalisis no toca el resto de campos', () {
+      final medida = nota.conAnalisis(const Duration(seconds: 5), [1, 2, 3]);
       expect(medida.duracion, const Duration(seconds: 5));
+      expect(medida.onda, [1, 2, 3]);
       expect(medida.ruta, nota.ruta);
       expect(medida.fecha, nota.fecha);
     });
@@ -143,31 +144,29 @@ void main() {
     final a2005 = audio('b', DateTime(2024, 5, 2, 20, 5));
     final a2010 = audio('c', DateTime(2024, 5, 2, 20, 10));
 
-    // Como se ven en "Recientes": del más nuevo al más viejo.
-    final comoSeVen = [a2010, a2005, a2001];
-
     test('encadena hacia delante en el tiempo, no hacia atrás', () {
-      final cola = construirCola(comoSeVen, a2001, (_) => false);
+      // Como se ven en "Recientes": del más nuevo al más viejo.
+      final cola = construirCola([a2010, a2005, a2001]);
       expect(cola.map((n) => n.fecha.minute), [1, 5, 10]);
     });
 
-    test('deja fuera lo ya escuchado', () {
-      final cola = construirCola(comoSeVen, a2001, (r) => r == a2005.ruta);
-      expect(cola.map((n) => n.fecha.minute), [1, 10]);
+    test('no pierde ningún audio por el camino', () {
+      final cola = construirCola([a2010, a2005, a2001]);
+      expect(cola.length, 3);
     });
 
-    test('el audio pulsado entra aunque ya esté escuchado', () {
-      final cola = construirCola(comoSeVen, a2005, (_) => true);
-      expect(cola, [a2005]);
+    test('no toca la lista original', () {
+      final original = [a2010, a2005, a2001];
+      construirCola(original);
+      expect(original.first, a2010);
     });
 
-    test('con todo escuchado y sin pulsar nada ajeno, la cola es solo ese', () {
-      final cola = construirCola(comoSeVen, a2010, (_) => true);
-      expect(cola.single.ruta, a2010.ruta);
+    test('con la lista vacía devuelve vacío', () {
+      expect(construirCola(const []), isEmpty);
     });
   });
 
-  group('leerDuracionOgg', () {
+  group('analizarOpus', () {
     late Directory temporal;
 
     setUp(() => temporal = Directory.systemTemp.createTempSync('waudios'));
@@ -184,42 +183,65 @@ void main() {
       final ogg = _oggSintetico(granuloFinal: 96000, preSkip: 312);
       final ruta = escribir('nota.opus', ogg).path;
 
-      final duracion = leerDuracionOgg(ruta);
+      final duracion = analizarOpus(ruta)?.duracion;
       expect(duracion, isNotNull);
       expect(duracion!.inMilliseconds, ((96000 - 312) * 1000) ~/ 48000);
     });
 
     test('descuenta el pre-skip declarado en OpusHead', () {
-      final sinPreSkip = leerDuracionOgg(
-          escribir('a.opus', _oggSintetico(granuloFinal: 48000, preSkip: 0))
-              .path)!;
-      final conPreSkip = leerDuracionOgg(
-          escribir('b.opus', _oggSintetico(granuloFinal: 48000, preSkip: 4800))
-              .path)!;
+      final sinPreSkip = analizarOpus(
+              escribir('a.opus', _oggSintetico(granuloFinal: 48000, preSkip: 0))
+                  .path)!
+          .duracion;
+      final conPreSkip = analizarOpus(escribir('b.opus',
+                  _oggSintetico(granuloFinal: 48000, preSkip: 4800))
+              .path)!
+          .duracion;
       expect(sinPreSkip.inMilliseconds, 1000);
       expect(conPreSkip.inMilliseconds, 900);
     });
 
     test('devuelve null en archivos que no son Ogg', () {
-      expect(leerDuracionOgg(escribir('x.mp3', List.filled(500, 0x41)).path),
+      expect(analizarOpus(escribir('x.mp3', List.filled(500, 0x41)).path),
           isNull);
     });
 
     test('devuelve null en archivos truncados o inexistentes', () {
-      expect(leerDuracionOgg(escribir('corto.opus', [0x4F, 0x67]).path), isNull);
-      expect(leerDuracionOgg('${temporal.path}/no-existe.opus'), isNull);
+      expect(analizarOpus(escribir('corto.opus', [0x4F, 0x67]).path), isNull);
+      expect(analizarOpus('${temporal.path}/no-existe.opus'), isNull);
     });
 
-    test('no se confunde con una firma OggS dentro del audio', () {
-      // Metemos "OggS" con un byte de versión inválido en medio del payload:
-      // el parser debe seguir usando la última cabecera de página real.
-      final ogg = _oggSintetico(
-        granuloFinal: 48000,
-        preSkip: 0,
-        rellenoFinal: [0x4F, 0x67, 0x67, 0x53, 0x07, 0x00, 0x00, 0x00],
+    test('la onda tiene el tamaño fijo y valores dentro de rango', () {
+      final ruta =
+          escribir('o.opus', _oggSintetico(granuloFinal: 96000, preSkip: 0))
+              .path;
+      final onda = analizarOpus(ruta)!.onda;
+
+      expect(onda.length, barrasOnda);
+      expect(onda.every((v) => v >= 0 && v <= 100), isTrue);
+    });
+
+    test('la onda sube donde los paquetes pesan más y baja en los silencios', () {
+      // Dos mitades: la primera con paquetes diminutos (lo que el códec
+      // produce en un silencio) y la segunda con paquetes grandes (habla).
+      // La onda tiene que reflejar ese contraste.
+      final ogg = _oggVariable(
+        bytesPorPagina: [
+          ...List.filled(10, 20),
+          ...List.filled(10, 400),
+        ],
+        muestrasPorPagina: 4800,
       );
-      expect(leerDuracionOgg(escribir('c.opus', ogg).path)?.inMilliseconds,
-          1000);
+      final onda = analizarOpus(escribir('v.opus', ogg).path)!.onda;
+
+      final primeraMitad = onda.take(barrasOnda ~/ 2);
+      final segundaMitad = onda.skip(barrasOnda ~/ 2);
+      final mediaPrimera =
+          primeraMitad.reduce((a, b) => a + b) / primeraMitad.length;
+      final mediaSegunda =
+          segundaMitad.reduce((a, b) => a + b) / segundaMitad.length;
+
+      expect(mediaSegunda, greaterThan(mediaPrimera * 2));
     });
   });
 }
@@ -281,4 +303,25 @@ List<int> _pagina({
     ...segmentos,
     ...payload,
   ];
+}
+
+/// Ogg con páginas de tamaños distintos, para comprobar la forma de onda.
+List<int> _oggVariable({
+  required List<int> bytesPorPagina,
+  required int muestrasPorPagina,
+}) {
+  final opusHead = <int>[
+    ...'OpusHead'.codeUnits,
+    1, 1, 0, 0, 0x80, 0xBB, 0x00, 0x00, 0, 0, 0,
+  ];
+
+  final salida = <int>[..._pagina(granulo: 0, secuencia: 0, payload: opusHead)];
+  for (var i = 0; i < bytesPorPagina.length; i++) {
+    salida.addAll(_pagina(
+      granulo: muestrasPorPagina * (i + 1),
+      secuencia: i + 1,
+      payload: List.filled(bytesPorPagina[i], 0xAA),
+    ));
+  }
+  return salida;
 }

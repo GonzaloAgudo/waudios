@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../modelos/nota_audio.dart';
-import 'duracion_opus.dart';
+import 'analisis_opus.dart';
 
 /// Carpetas donde WhatsApp (y WhatsApp Business) guardan audios, tanto en la
 /// ubicación moderna (`Android/media`) como en la antigua (raíz de la memoria).
@@ -19,6 +19,10 @@ const List<String> _rutasWhatsApp = [
   '/storage/emulated/0/WhatsApp/Media/WhatsApp Voice Notes',
   '/storage/emulated/0/WhatsApp/Media/WhatsApp Audio',
 ];
+
+/// Formato de la caché en disco. Al subirlo, lo que guardó una versión
+/// anterior deja de usarse para el análisis y se vuelve a calcular.
+const int _versionCache = 3;
 
 const Set<String> _extensionesAudio = {
   '.opus',
@@ -45,13 +49,12 @@ const Set<String> _extensionesAudio = {
 ///    aparecen a los ~400 ms en vez de al final.
 /// 3. Las carpetas semanales cuya fecha de modificación no ha cambiado ni se
 ///    listan. Eso deja el refresco de arranques posteriores en ~120 ms.
-/// 4. Las duraciones se calculan bajo demanda, solo para los audios que el
-///    usuario tiene delante, y se guardan en la caché para no repetirlo.
+/// 4. La duración y la forma de onda se sacan bajo demanda, solo de los audios
+///    que el usuario tiene delante, y se guardan en la caché para no repetirlo.
 class IndiceAudios extends ChangeNotifier {
   final Map<String, NotaAudio> _porRuta = {};
   final Map<DateTime, List<NotaAudio>> _porDia = {};
-  final Set<String> _escuchados = {};
-  final Set<String> _duracionesEnCurso = {};
+  final Set<String> _analisisEnCurso = {};
 
   /// Fecha de modificación de cada carpeta semanal la última vez que la
   /// listamos. Permite saltarse enteras las que no han cambiado.
@@ -86,23 +89,6 @@ class IndiceAudios extends ChangeNotifier {
       _porDia[DateTime(dia.year, dia.month, dia.day)] ?? const [];
 
   int cuentaDelDia(DateTime dia) => delDia(dia).length;
-
-  bool estaEscuchado(String ruta) => _escuchados.contains(ruta);
-
-  int get sinEscuchar => _todas.length - _escuchados.length;
-
-  void marcarEscuchado(String ruta) {
-    if (_escuchados.add(ruta)) {
-      _programarGuardado();
-      notifyListeners();
-    }
-  }
-
-  void marcarTodoEscuchado() {
-    _escuchados.addAll(_todas.map((a) => a.ruta));
-    _programarGuardado();
-    notifyListeners();
-  }
 
   /// Arranque: caché primero, disco después.
   Future<void> iniciar() async {
@@ -169,7 +155,6 @@ class IndiceAudios extends ChangeNotifier {
               .toList();
           for (final ruta in borradas) {
             _porRuta.remove(ruta);
-            _escuchados.remove(ruta);
           }
           if (borradas.isNotEmpty) _reconstruirIndices();
         }
@@ -192,33 +177,37 @@ class IndiceAudios extends ChangeNotifier {
     }
   }
 
-  /// Calcula la duración de un puñado de audios (los que se están viendo) en un
-  /// isolate y la guarda. Ignora los que ya la tienen o ya están en cola.
-  Future<void> asegurarDuraciones(Iterable<NotaAudio> notas) async {
+  /// Analiza un puñado de audios (los que se están viendo) en un isolate y
+  /// guarda su duración y su forma de onda. Ignora los que ya lo están o ya
+  /// están en cola.
+  Future<void> asegurarAnalisis(Iterable<NotaAudio> notas) async {
     final pendientes = notas
-        .where((n) => n.duracion == null && !_duracionesEnCurso.contains(n.ruta))
+        .where((n) => !n.analizado && !_analisisEnCurso.contains(n.ruta))
         .map((n) => n.ruta)
         .toList();
     if (pendientes.isEmpty) return;
 
-    _duracionesEnCurso.addAll(pendientes);
+    _analisisEnCurso.addAll(pendientes);
     try {
       // `compute` y no `Isolate.run`: el closure de Isolate.run se lleva
       // consigo el `this` de esta clase, y con él el Timer del guardado
       // diferido, que no se puede enviar a otro isolate.
-      final medidas = await compute(_medirDuraciones, pendientes);
+      final resultados = await compute(_analizarLote, pendientes);
 
       var cambios = false;
-      medidas.forEach((ruta, ms) {
-        final actual = _porRuta[ruta];
-        if (actual == null) return;
+      for (final r in resultados) {
+        final actual = _porRuta[r.ruta];
+        if (actual == null) continue;
         // Duration.zero marca "ya lo intentamos y no se pudo leer", para no
         // volver a abrir el archivo en cada scroll.
-        _porRuta[ruta] = actual.conDuracion(
-          ms == null ? Duration.zero : Duration(milliseconds: ms),
+        _porRuta[r.ruta] = actual.conAnalisis(
+          r.duracionMs == null
+              ? Duration.zero
+              : Duration(milliseconds: r.duracionMs!),
+          r.onda,
         );
         cambios = true;
-      });
+      }
 
       if (cambios) {
         _reconstruirIndices();
@@ -226,9 +215,9 @@ class IndiceAudios extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Error midiendo duraciones: $e');
+      debugPrint('Error analizando audios: $e');
     } finally {
-      _duracionesEnCurso.removeAll(pendientes);
+      _analisisEnCurso.removeAll(pendientes);
     }
   }
 
@@ -260,16 +249,26 @@ class IndiceAudios extends ChangeNotifier {
       final crudo = jsonDecode(await fichero.readAsString());
       if (crudo is! Map) return;
 
+      // Las cachés de versiones anteriores traen duración pero no forma de
+      // onda. Si nos quedáramos con esa duración, los audios contarían como ya
+      // analizados y nunca se les calcularía la onda: de una caché vieja solo
+      // aprovechamos lo que da el escaneo (ruta, fecha y tamaño).
+      final version = crudo['version'];
+      final analisisUtil = version == _versionCache;
+
       final filas = crudo['audios'];
       if (filas is List) {
         for (final fila in filas) {
           final nota = NotaAudio.desdeJson(fila);
-          if (nota != null) _porRuta[nota.ruta] = nota;
+          if (nota == null) continue;
+          _porRuta[nota.ruta] = analisisUtil
+              ? nota
+              : NotaAudio(
+                  ruta: nota.ruta,
+                  fecha: nota.fecha,
+                  tamano: nota.tamano,
+                );
         }
-      }
-      final oidos = crudo['escuchados'];
-      if (oidos is List) {
-        _escuchados.addAll(oidos.whereType<String>());
       }
       final carpetas = crudo['carpetas'];
       if (carpetas is Map) {
@@ -294,9 +293,8 @@ class IndiceAudios extends ChangeNotifier {
     try {
       final fichero = await _ficheroCache();
       final datos = {
-        'version': 1,
+        'version': _versionCache,
         'audios': _porRuta.values.map((n) => n.aJson()).toList(),
-        'escuchados': _escuchados.toList(),
         'carpetas': _mtimesCarpetas,
       };
       await fichero.writeAsString(jsonEncode(datos));
@@ -512,11 +510,27 @@ bool _esAudio(String ruta) {
   return _extensionesAudio.contains(ruta.substring(punto).toLowerCase());
 }
 
-/// Duraciones de un lote de archivos, dentro de un isolate.
-Map<String, int?> _medirDuraciones(List<String> rutas) {
-  final resultado = <String, int?>{};
-  for (final ruta in rutas) {
-    resultado[ruta] = leerDuracionOgg(ruta)?.inMilliseconds;
-  }
-  return resultado;
+/// Lo que devuelve el análisis de un archivo. Clase propia y no un registro
+/// para que viaje entre isolates sin sorpresas.
+class ResultadoAnalisis {
+  final String ruta;
+  final int? duracionMs;
+  final List<int> onda;
+
+  const ResultadoAnalisis(this.ruta, this.duracionMs, this.onda);
+}
+
+/// Análisis de un lote de archivos, dentro de un isolate.
+List<ResultadoAnalisis> _analizarLote(List<String> rutas) {
+  return [
+    for (final ruta in rutas)
+      () {
+        final analisis = analizarOpus(ruta);
+        return ResultadoAnalisis(
+          ruta,
+          analisis?.duracion.inMilliseconds,
+          analisis?.onda ?? const <int>[],
+        );
+      }(),
+  ];
 }

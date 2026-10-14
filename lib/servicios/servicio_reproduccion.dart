@@ -16,26 +16,14 @@ import '../modelos/nota_audio.dart';
 /// Quién compone la cola es la lista que llama a [reproducir]: normalmente son
 /// los audios que quedan por escuchar, para que el encadenado no repita nada ya
 /// oído. Aquí solo se reproduce lo que llega.
-/// Construye la cola de reproducción continua a partir de la lista que se está
-/// viendo y del audio que se ha pulsado.
+/// Ordena la lista que se está viendo para reproducirla en cadena.
 ///
-/// Dos reglas, y las dos vienen de cómo se usa la app para ponerse al día:
-///
-/// - Solo entra lo que queda por escuchar. El audio pulsado entra siempre,
-///   aunque ya estuviera escuchado, porque ahí la decisión es explícita.
-/// - El orden es cronológico ascendente, se vea la lista como se vea. En
-///   "Recientes" los audios se enseñan del más nuevo al más viejo, pero
-///   encadenar en ese orden haría que tras el de las 20:05 sonara el de las
-///   20:01, que es justo al revés de como se siguió la conversación.
-List<NotaAudio> construirCola(
-  List<NotaAudio> audios,
-  NotaAudio pulsado,
-  bool Function(String ruta) estaEscuchado,
-) {
-  final cola = [
-    for (final audio in audios)
-      if (audio.ruta == pulsado.ruta || !estaEscuchado(audio.ruta)) audio,
-  ];
+/// En "Recientes" los audios se enseñan del más nuevo al más viejo, pero
+/// encadenar en ese orden haría que tras el de las 20:05 sonara el de las
+/// 20:01, al revés de como se siguió la conversación. La cola va siempre
+/// hacia delante en el tiempo, se vea la lista como se vea.
+List<NotaAudio> construirCola(List<NotaAudio> audios) {
+  final cola = List<NotaAudio>.of(audios);
   cola.sort((a, b) => a.fecha.compareTo(b.fecha));
   return cola;
 }
@@ -47,9 +35,6 @@ class ServicioReproduccion extends ChangeNotifier {
   int _indice = -1;
   double _velocidad = 1.0;
 
-  /// Se avisa cuando un audio se termina, para marcarlo como escuchado.
-  void Function(NotaAudio nota)? alTerminarAudio;
-
   ServicioReproduccion() {
     _reproductor.currentIndexStream.listen((i) {
       if (i == null || i < 0 || i >= _cola.length) return;
@@ -59,13 +44,17 @@ class ServicioReproduccion extends ChangeNotifier {
       }
     });
 
-    _reproductor.playerStateStream.listen((estado) {
-      if (estado.processingState == ProcessingState.completed) {
-        final actual = this.actual;
-        if (actual != null) alTerminarAudio?.call(actual);
-      }
-      notifyListeners();
-    });
+    _reproductor.playerStateStream.listen((_) => notifyListeners());
+
+    // Un archivo corrupto o borrado a media cola no debe cortar la cadena:
+    // se salta y se sigue con el siguiente.
+    _reproductor.playbackEventStream.listen(
+      (_) {},
+      onError: (Object error, StackTrace _) {
+        debugPrint('Fallo reproduciendo, saltando al siguiente: $error');
+        if (haySiguiente) unawaited(siguiente());
+      },
+    );
   }
 
   AudioPlayer get reproductor => _reproductor;

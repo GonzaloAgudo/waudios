@@ -11,9 +11,9 @@ import 'tarjeta_audio.dart';
 
 /// Lista de audios reutilizable (la usan tanto Recientes como Calendario).
 ///
-/// Además de dibujar, es la que pide las duraciones: solo de los elementos que
-/// se están construyendo, agrupadas en lotes. Así medir miles de archivos nunca
-/// llega a ocurrir; se miden las decenas que el usuario mira de verdad.
+/// Además de dibujar, es la que pide el análisis de los archivos: solo de los
+/// elementos que se están construyendo y en lotes. Así analizar miles de
+/// audios nunca llega a ocurrir; se analizan las decenas que se miran.
 class ListaAudios extends StatefulWidget {
   final List<NotaAudio> audios;
   final IndiceAudios indice;
@@ -27,8 +27,6 @@ class ListaAudios extends StatefulWidget {
   /// Se dibuja tras el último audio (por ejemplo, el enlace al archivo).
   final Widget? pie;
 
-  final ScrollController? controlador;
-
   const ListaAudios({
     super.key,
     required this.audios,
@@ -37,7 +35,6 @@ class ListaAudios extends StatefulWidget {
     this.agruparPorDia = false,
     this.cabecera,
     this.pie,
-    this.controlador,
   });
 
   @override
@@ -45,7 +42,7 @@ class ListaAudios extends StatefulWidget {
 }
 
 class _ListaAudiosState extends State<ListaAudios> {
-  final Set<NotaAudio> _pendientesDeMedir = {};
+  final Set<NotaAudio> _pendientesDeAnalizar = {};
   Timer? _loteDiferido;
 
   /// La lista aplanada se recalcula solo cuando cambian de verdad los audios.
@@ -60,16 +57,16 @@ class _ListaAudiosState extends State<ListaAudios> {
     super.dispose();
   }
 
-  /// Acumula lo que se va construyendo y lo manda a medir de golpe.
-  void _pedirDuracion(NotaAudio nota) {
-    if (nota.duracion != null) return;
-    _pendientesDeMedir.add(nota);
+  /// Acumula lo que se va construyendo y lo manda a analizar de golpe.
+  void _pedirAnalisis(NotaAudio nota) {
+    if (nota.analizado) return;
+    _pendientesDeAnalizar.add(nota);
     _loteDiferido?.cancel();
     _loteDiferido = Timer(const Duration(milliseconds: 80), () {
-      if (!mounted || _pendientesDeMedir.isEmpty) return;
-      final lote = _pendientesDeMedir.toList();
-      _pendientesDeMedir.clear();
-      widget.indice.asegurarDuraciones(lote);
+      if (!mounted || _pendientesDeAnalizar.isEmpty) return;
+      final lote = _pendientesDeAnalizar.toList();
+      _pendientesDeAnalizar.clear();
+      widget.indice.asegurarAnalisis(lote);
     });
   }
 
@@ -83,7 +80,10 @@ class _ListaAudiosState extends State<ListaAudios> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(Icons.info_outline, color: colores.primary),
+              leading: Icon(
+                nota.esNotaDeVoz ? Icons.mic_none_rounded : Icons.audiotrack,
+                color: colores.primary,
+              ),
               title: Text(nota.nombre),
               subtitle: Text(
                 '${fmt.etiquetaDia(nota.fecha)} a las ${fmt.hora(nota.fecha)}'
@@ -91,30 +91,13 @@ class _ListaAudiosState extends State<ListaAudios> {
                 '${nota.duracion != null && nota.duracion! > Duration.zero ? ' · ${fmt.duracion(nota.duracion)}' : ''}',
               ),
             ),
-            const Divider(height: 1),
+            const Divider(),
             ListTile(
               leading: const Icon(Icons.share_outlined),
               title: const Text('Compartir audio'),
               onTap: () {
                 Navigator.pop(contexto);
                 _compartir(nota);
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                widget.indice.estaEscuchado(nota.ruta)
-                    ? Icons.mark_email_unread_outlined
-                    : Icons.done_all,
-              ),
-              title: Text(
-                widget.indice.estaEscuchado(nota.ruta)
-                    ? 'Ya marcado como escuchado'
-                    : 'Marcar como escuchado',
-              ),
-              enabled: !widget.indice.estaEscuchado(nota.ruta),
-              onTap: () {
-                Navigator.pop(contexto);
-                widget.indice.marcarEscuchado(nota.ruta);
               },
             ),
           ],
@@ -138,9 +121,7 @@ class _ListaAudiosState extends State<ListaAudios> {
   }
 
   void _reproducir(NotaAudio nota) {
-    final cola =
-        construirCola(widget.audios, nota, widget.indice.estaEscuchado);
-    widget.reproduccion.reproducir(nota, cola);
+    widget.reproduccion.reproducir(nota, construirCola(widget.audios));
   }
 
   @override
@@ -152,8 +133,7 @@ class _ListaAudiosState extends State<ListaAudios> {
     final elementos = _elementosCacheados!;
 
     return ListView.builder(
-      controller: widget.controlador,
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: 28),
       itemCount: elementos.length,
       itemBuilder: (context, i) {
         final elemento = elementos[i];
@@ -168,13 +148,13 @@ class _ListaAudiosState extends State<ListaAudios> {
         }
 
         final nota = elemento as NotaAudio;
-        _pedirDuracion(nota);
+        _pedirAnalisis(nota);
 
         return TarjetaAudio(
           nota: nota,
           esActual: widget.reproduccion.esActual(nota),
           sonando: widget.reproduccion.sonando,
-          escuchado: widget.indice.estaEscuchado(nota.ruta),
+          reproduccion: widget.reproduccion,
           alPulsar: () => _reproducir(nota),
           alPulsarMas: () => _opciones(nota),
         );
@@ -217,26 +197,25 @@ class _CabeceraDia extends StatelessWidget {
   Widget build(BuildContext context) {
     final colores = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+      padding: const EdgeInsets.fromLTRB(20, 26, 20, 10),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
         children: [
           Text(
-            fmt.etiquetaDia(dia),
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            fmt.etiquetaDia(dia).toUpperCase(),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: colores.primary,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.3,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.4,
                 ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Divider(color: colores.outlineVariant, height: 1),
-          ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Text(
             '$cuantos',
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: colores.onSurfaceVariant,
+                  letterSpacing: 0.5,
                 ),
           ),
         ],

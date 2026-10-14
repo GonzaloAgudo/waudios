@@ -143,32 +143,27 @@ class _VistaCalendarioState extends State<VistaCalendario> {
                   const TextStyle(),
             ),
             calendarBuilders: CalendarBuilders<NotaAudio>(
+              // Cuántos audios tiene cada día, para ver de un vistazo dónde
+              // hay algo en vez de ir tanteando día por día.
               markerBuilder: (context, dia, eventos) {
                 if (eventos.isEmpty) return null;
-                final sinEscuchar = eventos
-                    .where((a) => !indice.estaEscuchado(a.ruta))
-                    .length;
                 return Align(
                   alignment: Alignment.bottomCenter,
                   child: Container(
-                    margin: const EdgeInsets.only(bottom: 4),
+                    margin: const EdgeInsets.only(bottom: 5),
                     padding:
                         const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                     decoration: BoxDecoration(
-                      color: sinEscuchar > 0
-                          ? colores.tertiary
-                          : colores.primary.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(8),
+                      color: colores.primary.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(7),
                     ),
                     child: Text(
                       '${eventos.length}',
                       style: TextStyle(
                         fontSize: 9,
                         height: 1.2,
-                        fontWeight: FontWeight.bold,
-                        color: sinEscuchar > 0
-                            ? colores.onTertiary
-                            : colores.onPrimary,
+                        fontWeight: FontWeight.w800,
+                        color: colores.primary,
                       ),
                     ),
                   ),
